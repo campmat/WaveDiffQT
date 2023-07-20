@@ -1,7 +1,8 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5 import uic
 
+import numpy as np
 import inspect
+import json
 
 from diffractio.scalar_sources_XY import Scalar_source_XY
 
@@ -13,6 +14,9 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.setWindowTitle("WaveDiffQT")
         self.resize(1600, 1000)
+
+        #file settings
+        self.fileName = None
 
         #global settings
         self.wavelength = 532.8
@@ -26,9 +30,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.max_z = 1000
 
+        self.N = 2048
+
         #optical objects
         self.selected_new_object = None
         self.new_object = None
+        self.new_object_data = None
+        self.new_object_type = None
+        self.new_object_func = None
         self.optical_objects = []
 
         self.makeWidgets()
@@ -45,10 +54,41 @@ class MainWindow(QtWidgets.QMainWindow):
         print("Odpri datoteko")
 
     def saveFile(self):
-        print("Shrani datoteko")
+        if self.fileName == None:
+            self.saveFileAs()
+        else:
+            optical_objects_data = []
+            for optical_obj in self.optical_objects:
+                optical_objects_data.append(optical_obj.toJSON())
+
+            data = {}
+
+            data["wavelength"] = self.wavelength
+            data["xin"] = self.xin
+            data["yin"] = self.yin
+            data["xout"] = self.xout
+            data["yout"] = self.yout
+            data["use3Dforcalculating"] = self.use3Dforcalculating
+            data["max_z"] = self.max_z
+            data["N"] = self.N
+            data["optical_objects"] = optical_objects_data
+
+            file = open(self.fileName, "w")
+            file.write(json.dumps(data))
 
     def saveFileAs(self):
-        print("Shrani datoteko kot")
+        fileDialog = QtWidgets.QFileDialog(self)
+        fileDialog.setNameFilter("*.json")
+        fileDialog.setFileMode(QtWidgets.QFileDialog.AnyFile)
+        fileDialog.setWindowTitle("Shrani datoteko kot ...")
+        fileDialog.setAcceptMode(QtWidgets.QFileDialog.AcceptSave)
+
+        if fileDialog.exec_():
+            self.fileName = fileDialog.selectedFiles()[0]
+            if self.fileName.split(".")[-1].lower() != "json":
+                self.fileName = self.fileName + ".json"
+            
+            self.saveFile()
         
     def openSettings(self):
         print("Nastavitve")
@@ -104,7 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.saveFileAsButton = QtWidgets.QAction("Shrani datoteko &kot")
         self.saveFileAsButton.triggered.connect(self.saveFileAs)
-        self.saveFileAsButton.setShortcut(QtGui.QKeySequence("Ctrl+Alt+s"))
+        self.saveFileAsButton.setShortcut(QtGui.QKeySequence("Ctrl+Shift+s"))
         self.fileMenu.addAction(self.saveFileAsButton)
 
         self.settingsMenu = self.menu.addMenu("&Nastavitve")
@@ -117,6 +157,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.globalSettingsButton.setShortcut(QtGui.QKeySequence("Ctrl+g"))
         self.globalSettingsButton.triggered.connect(self.showGlobalSettings)
         self.settingsMenu.addAction(self.globalSettingsButton)
+
+        self.opticalObjectsButton = QtWidgets.QAction("&Optični objekti")
+        self.opticalObjectsButton.triggered.connect(self.showOpticalObjects)
+        self.settingsMenu.addAction(self.opticalObjectsButton)
 
     def setXin(self, new_xin):
         if new_xin != None:
@@ -183,14 +227,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selected_new_object = item.text()
         self.addItemLayout = QtWidgets.QVBoxLayout()
         signature = None
+
+        xfield = np.linspace(-self.xin, self.xin, self.N)
+        yfield = np.linspace(-self.yin, self.yin, self.N)
+
         if item.text() == "Ravno valovanje":
-            self.new_object = Scalar_source_XY(self.xin, self.yin, self.wavelength)
+            self.new_object = Scalar_source_XY(xfield, yfield, self.wavelength)
+            self.new_object_type = "source"
+            self.new_object_func = "plane_wave"
             signature = self.get_default_args(self.new_object.plane_wave)                
         elif item.text() == "Sferično valovanje":
-            self.new_object = Scalar_source_XY(self.xin, self.yin, self.wavelength)
+            self.new_object = Scalar_source_XY(xfield, yfield, self.wavelength)
+            self.new_object_type = "source"
+            self.new_object_func = "spherical_wave"
             signature = self.get_default_args(self.new_object.spherical_wave) 
         elif item.text() == "Gaussov snop":
-            self.new_object = Scalar_source_XY(self.xin, self.yin, self.wavelength)
+            self.new_object = Scalar_source_XY(xfield, yfield, self.wavelength)
+            self.new_object_type = "source"
+            self.new_object_func = "gauss_beam"
             signature = self.get_default_args(self.new_object.gauss_beam) 
         elif item.text() == "Maska":
             pass
@@ -201,8 +255,6 @@ class MainWindow(QtWidgets.QMainWindow):
         elif item.text() == "Aksionska leča":
             pass
         elif item.text() == "Prizma":
-            pass
-        elif item.text() == "Slika":
             pass
         else:
             print(item.text())
@@ -217,7 +269,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 layout = QtWidgets.QHBoxLayout()
                 layoutX = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_x", 0, None)
-                layoutY = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_x", 0, None)
+                layoutY = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_y", 0, None)
                 layout.addLayout(layoutX)
                 layout.addLayout(layoutY)
             self.addItemLayout.addLayout(layout)
@@ -250,6 +302,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     if type(item) == QtWidgets.QLineEdit:
                         data.append(float(item.text()))
 
+        self.new_object_data = data
         #print(*data)
 
         if self.selected_new_object == "Ravno valovanje":
@@ -267,8 +320,6 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self.selected_new_object == "Aksionska leča":
             pass
         elif self.selected_new_object == "Prizma":
-            pass
-        elif self.selected_new_object == "Slika":
             pass
         else:
             print(item.text())
@@ -303,10 +354,46 @@ class MainWindow(QtWidgets.QMainWindow):
                     else:
                         pozZ = float(item.text())
         
-        self.optical_objects.append(OpticalObject(name, pozZ, self.new_object))
+        self.optical_objects.append(OpticalObject(name, pozZ, self.new_object_data, self.new_object_type, self.new_object_func, self.new_object))
         self.selected_new_object = None
         self.new_object = None
+        self.new_object_data = None
+        self.new_object_type = None
+        self.new_object_func = None
         self.showGlobalSettings()
+
+    def showOpticalObjects(self):
+        layout = QtWidgets.QVBoxLayout()
+
+        for optical_obj in self.optical_objects:
+            obj_layout = QtWidgets.QVBoxLayout()
+            arg_layout = QtWidgets.QHBoxLayout()
+            data_layout = QtWidgets.QHBoxLayout()
+
+            name_label = QtWidgets.QLabel()
+            name_label.setText(optical_obj.name)
+            name_label.setStyleSheet("border: none")
+
+            poz_z_label = QtWidgets.QLabel()
+            poz_z_label.setText(str(optical_obj.pozZ))
+            poz_z_label.setStyleSheet("border: none")
+
+            data_label = QtWidgets.QLabel()
+            data_label.setText(str(optical_obj.data))
+            data_label.setStyleSheet("border: none")
+
+            arg_layout.addWidget(name_label)
+            arg_layout.addWidget(poz_z_label)
+            data_layout.addWidget(data_label)
+
+            obj_layout.addLayout(arg_layout)
+            obj_layout.addLayout(data_layout)
+            layout.addLayout(obj_layout)
+
+        if self.dataWidget.layout() != None:
+            QtWidgets.QWidget().setLayout(self.dataWidget.layout())
+        self.dataWidget.setLayout(layout)
+
 
     def makeHBoxLayoutWithLabelAndLineEdit(self, label_text, initial_value, callback_func, intValidator=True):
         layout = QtWidgets.QHBoxLayout()
@@ -364,4 +451,3 @@ class MainWindow(QtWidgets.QMainWindow):
         self.masksListWidget.addItem("Difraktična leča")
         self.masksListWidget.addItem("Aksionska leča")
         self.masksListWidget.addItem("Prizma")
-        self.masksListWidget.addItem("Slika")
