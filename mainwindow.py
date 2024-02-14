@@ -1,12 +1,17 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 import numpy as np
+import matplotlib.pyplot as plt
 import inspect
 import json
+import math
 
 from diffractio.scalar_sources_XY import Scalar_source_XY
+from diffractio.scalar_masks_XY import Scalar_mask_XY
 
 from opticalobject import OpticalObject
+
+from maskeditor import MaskEditor
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -32,6 +37,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.N = 2048
 
+        self.currentZ = 0
+
         #optical objects
         self.selected_new_object = None
         self.new_object = None
@@ -40,18 +47,81 @@ class MainWindow(QtWidgets.QMainWindow):
         self.new_object_func = None
         self.optical_objects = []
 
+        self.maskEditor = MaskEditor()
+
         self.makeWidgets()
         self.makeMenuBar()
         self.addItems()
 
         self.showGlobalSettings()
-
         
     def newFile(self):
-        print("Nova datoteka")
+        self.fileName = None
+        self.optical_objects = []
+
+        self.wavelength = 532.8
+        self.xin = 2500
+        self.yin = 2500
+
+        self.xout = 500
+        self.yout = 500
+
+        self.use3Dforcalculating = False
+        self.max_z = 1000
+        self.N = 2048
 
     def openFile(self):
-        print("Odpri datoteko")
+        fileDialog = QtWidgets.QFileDialog(self)
+        fileDialog.setNameFilter("*.json")
+        fileDialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        fileDialog.setWindowTitle("Odpri datoteko")
+
+        if fileDialog.exec_():
+            self.fileName = fileDialog.selectedFiles()[0]
+            file = open(self.fileName, "r")
+            data = json.load(file)
+            file.close()
+
+            self.wavelength = data["wavelength"]
+            self.xin = data["xin"]
+            self.yin = data["yin"]
+
+            self.xout = data["xout"]
+            self.yout = data["yout"]
+
+            self.use3Dforcalculating = data["use3Dforcalculating"]
+            self.max_z = data["max_z"]
+            self.N = data["N"]
+
+            for optical_obj_data in data["optical_objects"]:
+                #print(optical_obj_data)
+                xfield = np.linspace(-self.xin, self.xin, self.N)
+                yfield = np.linspace(-self.yin, self.yin, self.N)
+                new_object = None
+                if optical_obj_data["type"] == "source":
+                    new_object = Scalar_source_XY(xfield, yfield, self.wavelength)
+                
+                    if optical_obj_data["func"] == "plane_wave":
+                        new_object.plane_wave(*optical_obj_data["data"])
+                    elif optical_obj_data["func"] == "spherical_wave":
+                        new_object.spherical_wave(*optical_obj_data["data"])
+                    elif optical_obj_data["func"] == "gauss_beam":
+                        new_object.gauss_beam(*optical_obj_data["data"])
+                
+                elif optical_obj_data["type"] == "mask":
+                    new_object = Scalar_mask_XY(xfield, yfield, self.wavelength)
+                    if optical_obj_data["func"] == "mask":
+                        pass
+                    elif optical_obj_data["func"] == "lens":
+                        new_object.lens(*optical_obj_data["data"])
+                    elif optical_obj_data["func"] == "fresnel_lens":
+                        new_object.fresnel_lens(*optical_obj_data["data"])
+                    elif optical_obj_data["func"] == "axicon":
+                        new_object.axicon(*optical_obj_data["data"])
+                            
+                self.optical_objects.append(OpticalObject(optical_obj_data["name"], optical_obj_data["pozZ"], optical_obj_data["data"], optical_obj_data["type"], optical_obj_data["func"], new_object))
+
+            self.showGlobalSettings()
 
     def saveFile(self):
         if self.fileName == None:
@@ -75,6 +145,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             file = open(self.fileName, "w")
             file.write(json.dumps(data))
+            file.close()
 
     def saveFileAs(self):
         fileDialog = QtWidgets.QFileDialog(self)
@@ -92,7 +163,46 @@ class MainWindow(QtWidgets.QMainWindow):
         
     def openSettings(self):
         print("Nastavitve")
-  
+
+    def updateZSelectorAndLineEdit(self):
+        self.zSelector.setValue(self.currentZ)
+        self.zLineEdit.setText(str(self.currentZ))
+
+    def onZSelectorChange(self):
+        self.currentZ = self.zSelector.value()
+        self.updateZSelectorAndLineEdit()
+
+    def onZLineEditChange(self):
+        self.currentZ = int(self.zLineEdit.text())
+        self.updateZSelectorAndLineEdit()
+
+    def showDiffraction(self):
+        if self.use3Dforcalculating:
+            pass
+        else:
+            zPoz = self.zSelector.value()
+            self.optical_objects = sorted(self.optical_objects, key=lambda x : x.pozZ)
+
+            u = None
+
+            for opticalobj in self.optical_objects:
+                if u == None:
+                    u = opticalobj.obj
+                    # mask = Scalar_mask_XY(u.x, u.y, u.wavelength)
+                    # mask.square(r0 = (0, 0), size = (2 * u.x[-1], 2*u.y[-1]))
+                    # u = mask * u
+                    continue
+                if opticalobj.pozZ <= zPoz:
+                    oldU = u
+                    u = u.CZT(opticalobj.pozZ, self.xout, self.yout)
+                    oldU.u = u
+                    u = oldU
+                    
+                    if opticalobj.type == "mask":
+                        u = opticalobj.obj * u
+
+            u.draw(logarithm = True)
+            plt.show()
     def makeWidgets(self):
         self.layout = QtWidgets.QHBoxLayout()
 
@@ -108,9 +218,33 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.layout.addLayout(self.componentsLayout, 15)
 
+        schemeLayout = QtWidgets.QVBoxLayout()
+
         self.schemeWidget = QtWidgets.QWidget()
         self.schemeWidget.setStyleSheet("background: gray")
-        self.layout.addWidget(self.schemeWidget, 70)
+        schemeLayout.addWidget(self.schemeWidget)
+
+        self.zSelector = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.zLineEdit = QtWidgets.QLineEdit()        
+        showBtn = QtWidgets.QPushButton("Prikaži")
+        self.zSelector.setMaximum(self.max_z)
+
+        self.updateZSelectorAndLineEdit()
+        self.zSelector.valueChanged.connect(self.onZSelectorChange)
+        self.zLineEdit.returnPressed.connect(self.onZLineEditChange)
+
+        showBtn.clicked.connect(self.showDiffraction)
+
+        zQVBoxLayout = QtWidgets.QVBoxLayout()
+        zQHBoxLayout = QtWidgets.QHBoxLayout()
+
+        zQVBoxLayout.addWidget(self.zSelector)
+        zQHBoxLayout.addWidget(self.zLineEdit, 10)
+        zQHBoxLayout.addWidget(showBtn, 10)
+        zQVBoxLayout.addLayout(zQHBoxLayout)
+
+        schemeLayout.addLayout(zQVBoxLayout)
+        self.layout.addLayout(schemeLayout, 70)
 
         self.dataWidget = QtWidgets.QWidget()
         self.dataWidget.setStyleSheet("background: white; border: 1px solid gray")
@@ -162,36 +296,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self.opticalObjectsButton.triggered.connect(self.showOpticalObjects)
         self.settingsMenu.addAction(self.opticalObjectsButton)
 
-    def setXin(self, new_xin):
+    def setXin(self):
+        new_xin = float(self.sender().text())
         if new_xin != None:
             self.xin = new_xin
 
-    def setXout(self, new_xout):
+    def setXout(self):
+        new_xout = float(self.sender().text())
         if new_xout != None:
             self.xout = new_xout
 
-    def setYin(self, new_yin):
+    def setYin(self):
+        new_yin = float(self.sender().text())
         if new_yin != None:
             self.yin = new_yin
     
-    def setYout(self, new_yout):
+    def setYout(self):
+        new_yout = float(self.sender().text())
         if new_yout != None:
             self.yout = new_yout
 
-    def setWavelength(self, new_wavelength):
+    def setWavelength(self):
+        new_wavelength = float(self.sender().text())
         if new_wavelength != None:
             self.wavelength = new_wavelength
 
-    def setMaxZ(self, new_max_z):
+    def setMaxZ(self):
+        new_max_z = float(self.sender().text())
         if new_max_z != None:
             self.max_z = new_max_z
 
-    def setCZT3D(self, new_czt3d):
+    def setCZT3D(self):
+        new_czt3d = self.sender().isChecked()
         if new_czt3d != None:
             if new_czt3d:
                 self.use3Dforcalculating = True
             else:
                 self.use3Dforcalculating = False
+
+    def setN(self):
+        new_N = float(self.sender().text())
+        if new_N != None:
+            if math.ceil(math.log2(new_N)) != math.floor(math.log2(new_N)):
+                new_N = 2 ** math.floor(math.log2(new_N))
+            self.N = new_N
+            self.showGlobalSettings()
 
     def showGlobalSettings(self):
         globalSettingsLayout = QtWidgets.QVBoxLayout()
@@ -215,6 +364,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         maxZLayout = self.makeHBoxLayoutWithLabelAndLineEdit("Maksimalni z:", self.max_z, self.setMaxZ)
         globalSettingsLayout.addLayout(maxZLayout)
+
+        Nlayout = self.makeHBoxLayoutWithLabelAndLineEdit("Število točk:", self.N, self.setN)
+        globalSettingsLayout.addLayout(Nlayout)
 
         czt3DLayout = self.makeHBoxLayoutWithLabelAndCheckBox("Uporabi 3D za izračun:", self.use3Dforcalculating, self.setCZT3D)
         globalSettingsLayout.addLayout(czt3DLayout)
@@ -247,15 +399,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.new_object_func = "gauss_beam"
             signature = self.get_default_args(self.new_object.gauss_beam) 
         elif item.text() == "Maska":
-            pass
+            self.maskEditor.show()
+            return
         elif item.text() == "Leča":
-            pass
+            self.new_object = Scalar_mask_XY(xfield, yfield, self.wavelength)
+            self.new_object_type = "mask"
+            self.new_object_func = "lens"
+            signature = self.get_default_args(self.new_object.lens)
         elif item.text() == "Difraktična leča":
-            pass
+            self.new_object = Scalar_mask_XY(xfield, yfield, self.wavelength)
+            self.new_object_type = "mask"
+            self.new_object_func = "fresnel_lens"
+            signature = self.get_default_args(self.new_object.fresnel_lens)
         elif item.text() == "Aksionska leča":
-            pass
-        elif item.text() == "Prizma":
-            pass
+            self.new_object = Scalar_mask_XY(xfield, yfield, self.wavelength)
+            self.new_object_type = "mask"
+            self.new_object_func = "axicon"
+            signature = self.get_default_args(self.new_object.axicon)
         else:
             print(item.text())
 
@@ -268,8 +428,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 layout = self.makeHBoxLayoutWithLabelAndCheckBox(arg, signature[arg], None)
             else:
                 layout = QtWidgets.QHBoxLayout()
-                layoutX = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_x", 0, None)
-                layoutY = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_y", 0, None)
+                initial_val = 0
+                if arg == "w0":
+                    initial_val = 1  
+                layoutX = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_x", initial_val, None)
+                layoutY = self.makeHBoxLayoutWithLabelAndLineEdit(arg + "_y", initial_val, None)
                 layout.addLayout(layoutX)
                 layout.addLayout(layoutY)
             self.addItemLayout.addLayout(layout)
@@ -314,13 +477,11 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self.selected_new_object == "Maska":
             pass
         elif self.selected_new_object == "Leča":
-            pass
+            self.new_object.lens(*data)
         elif self.selected_new_object == "Difraktična leča":
-            pass
+            self.new_object.fresnel_lens(*data)
         elif self.selected_new_object == "Aksionska leča":
-            pass
-        elif self.selected_new_object == "Prizma":
-            pass
+            self.new_object.axicon(*data)
         else:
             print(item.text())
         
@@ -394,7 +555,6 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QWidget().setLayout(self.dataWidget.layout())
         self.dataWidget.setLayout(layout)
 
-
     def makeHBoxLayoutWithLabelAndLineEdit(self, label_text, initial_value, callback_func, intValidator=True):
         layout = QtWidgets.QHBoxLayout()
         label = QtWidgets.QLabel()
@@ -404,12 +564,13 @@ class MainWindow(QtWidgets.QMainWindow):
         lineEdit = QtWidgets.QLineEdit()
         if intValidator:
             lineEdit.setValidator(QtGui.QIntValidator())
+
         if type(initial_value) != str:
             initial_value = str(initial_value)
 
         lineEdit.setText(initial_value)
         if callback_func != None:
-            lineEdit.textChanged.connect(callback_func)
+            lineEdit.editingFinished.connect(callback_func)
 
         layout.addWidget(label)
         layout.addWidget(lineEdit)
@@ -450,4 +611,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.masksListWidget.addItem("Leča")
         self.masksListWidget.addItem("Difraktična leča")
         self.masksListWidget.addItem("Aksionska leča")
-        self.masksListWidget.addItem("Prizma")
+
+    def closeEvent(self, event):
+        if self.maskEditor:
+            self.maskEditor.close()

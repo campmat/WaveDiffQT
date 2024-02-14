@@ -1,5 +1,3 @@
-import json
-
 class OpticalObject:
     def __init__(self, name, pozZ, data, type, func, obj):
         self.name = name
@@ -10,4 +8,4 @@ class OpticalObject:
         self.obj = obj
     
     def toJSON(self):
-        return json.dumps({"name": self.name, "pozZ": self.pozZ, "type:": self.type, "func": self.func, "data": self.data})
+        return {"name": self.name, "pozZ": self.pozZ, "type": self.type, "func": self.func, "data": self.data}
