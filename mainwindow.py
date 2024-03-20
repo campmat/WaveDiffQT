@@ -32,7 +32,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.yout = 500
 
         self.use3Dforcalculating = False
-
         self.max_z = 1000
 
         self.N = 2048
@@ -47,7 +46,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.new_object_func = None
         self.optical_objects = []
 
-        self.maskEditor = MaskEditor()
+        self.maskEditor = MaskEditor(self)
 
         self.makeWidgets()
         self.makeMenuBar()
@@ -67,6 +66,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.yout = 500
 
         self.use3Dforcalculating = False
+        self.cut_value = 0.0025
         self.max_z = 1000
         self.N = 2048
 
@@ -111,7 +111,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif optical_obj_data["type"] == "mask":
                     new_object = Scalar_mask_XY(xfield, yfield, self.wavelength)
                     if optical_obj_data["func"] == "mask":
-                        pass
+                        new_object = self.maskEditor.makeMaskFromShapeList(optical_obj_data["data"])
+                            
                     elif optical_obj_data["func"] == "lens":
                         new_object.lens(*optical_obj_data["data"])
                     elif optical_obj_data["func"] == "fresnel_lens":
@@ -188,9 +189,6 @@ class MainWindow(QtWidgets.QMainWindow):
             for opticalobj in self.optical_objects:
                 if u == None:
                     u = opticalobj.obj
-                    # mask = Scalar_mask_XY(u.x, u.y, u.wavelength)
-                    # mask.square(r0 = (0, 0), size = (2 * u.x[-1], 2*u.y[-1]))
-                    # u = mask * u
                     continue
                 if opticalobj.pozZ <= zPoz:
                     oldU = u
@@ -199,10 +197,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     u = oldU
                     
                     if opticalobj.type == "mask":
-                        u = opticalobj.obj * u
+                        u = opticalobj.obj * u                
 
             u.draw(logarithm = True)
             plt.show()
+
     def makeWidgets(self):
         self.layout = QtWidgets.QHBoxLayout()
 
@@ -400,6 +399,8 @@ class MainWindow(QtWidgets.QMainWindow):
             signature = self.get_default_args(self.new_object.gauss_beam) 
         elif item.text() == "Maska":
             self.maskEditor.show()
+            self.new_object_type = "mask"
+            self.new_object_func = "mask"
             return
         elif item.text() == "Leča":
             self.new_object = Scalar_mask_XY(xfield, yfield, self.wavelength)
@@ -475,7 +476,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self.selected_new_object == "Gaussov snop":
             self.new_object.gauss_beam(*data)
         elif self.selected_new_object == "Maska":
-            pass
+            self.new_object_data = self.maskEditor.shapes
+            self.new_object = self.maskEditor.mask
         elif self.selected_new_object == "Leča":
             self.new_object.lens(*data)
         elif self.selected_new_object == "Difraktična leča":
@@ -615,3 +617,5 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         if self.maskEditor:
             self.maskEditor.close()
+        
+        event.accept()
