@@ -10,9 +10,8 @@ from diffractio.scalar_sources_XY import Scalar_source_XY
 from diffractio.scalar_masks_XY import Scalar_mask_XY
 
 from opticalobject import OpticalObject
-
 from maskeditor import MaskEditor
-
+from diffractiondisplay import DiffractionDisplay
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -47,6 +46,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.optical_objects = []
 
         self.maskEditor = MaskEditor(self)
+        self.diffractionDisplay = DiffractionDisplay(self)
 
         self.makeWidgets()
         self.makeMenuBar()
@@ -178,13 +178,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.updateZSelectorAndLineEdit()
 
     def showDiffraction(self):
+        u = None
+        
         if self.use3Dforcalculating:
             pass
         else:
             zPoz = self.zSelector.value()
             self.optical_objects = sorted(self.optical_objects, key=lambda x : x.pozZ)
-
-            u = None
 
             for opticalobj in self.optical_objects:
                 if u == None:
@@ -199,8 +199,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     if opticalobj.type == "mask":
                         u = opticalobj.obj * u                
 
-            u.draw(logarithm = True)
-            plt.show()
+        self.diffractionDisplay.showScalarField(u)
+        if not self.diffractionDisplay.isVisible():
+            self.diffractionDisplay.show()
 
     def makeWidgets(self):
         self.layout = QtWidgets.QHBoxLayout()
@@ -617,5 +618,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         if self.maskEditor:
             self.maskEditor.close()
+        
+        if self.diffractionDisplay:
+            self.diffractionDisplay.close()
         
         event.accept()
